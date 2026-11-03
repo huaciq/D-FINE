@@ -1,0 +1,72 @@
+# ---- Training outputs / logs ----
+output/
+outputs/
+runs/
+logs/
+wandb/
+tensorboard/
+*.log
+
+# ---- Weights / exported models ----
+weight/
+weights/
+checkpoints/
+pretrained/
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.onnx
+*.engine
+*.trt
+*.plan
+*.bin
+
+# ---- Datasets (upload to server separately) ----
+# (anchored to root: src/data, configs/dataset, tools/dataset are source code)
+/data/
+/datasets/
+/dataset/
+/coco/
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.rar
+
+# ---- Inference results ----
+*_result.jpg
+*_result.png
+*_result.mp4
+torch_results.*
+onnx_result.*
+trt_result.*
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ---- Environments ----
+.venv/
+venv/
+env/
+.env
+.conda/
+
+# ---- IDE / OS ----
+.vscode/
+.idea/
+.claude/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
