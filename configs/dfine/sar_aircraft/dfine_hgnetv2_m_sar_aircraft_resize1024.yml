@@ -1,0 +1,24 @@
+# Ablation of the scale-preserving input under the frozen baseline protocol (trainval -> test):
+# identical to dfine_hgnetv2_m_sar_aircraft_baseline.yml, except every image is resized
+# directly to 1024x1024 (PGD's preprocessing), i.e. the per-image scale factor varies
+# 0.68..1.28 with the original 800..1500 px size.
+__include__: ['./dfine_hgnetv2_m_sar_aircraft_baseline.yml']
+
+output_dir: ./output/dfine_hgnetv2_m_sar_aircraft_resize1024
+
+train_dataloader:
+  dataset:
+    transforms:
+      ops:
+        - {type: RandomHorizontalFlip}
+        - {type: Resize, size: [1024, 1024], }
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+
+val_dataloader:
+  dataset:
+    transforms:
+      ops:
+        - {type: Resize, size: [1024, 1024], }
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}

@@ -19,6 +19,9 @@ from .det_engine import evaluate, train_one_epoch
 
 class DetSolver(BaseSolver):
     def fit(self):
+        if self.cfg.yaml_cfg.get("fixed_schedule", False):
+            return self.fit_fixed_schedule()
+
         self.train()
         args = self.cfg
         metric_names = ["AP50:95", "AP50", "AP75", "APsmall", "APmedium", "APlarge"]
@@ -200,6 +203,96 @@ class DetSolver(BaseSolver):
                                 coco_evaluator.coco_eval["bbox"].eval,
                                 self.output_dir / "eval" / name,
                             )
+
+        total_time = time.time() - start_time
+        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+        print("Training time {}".format(total_time_str))
+
+    def fit_fixed_schedule(self):
+        """Fixed-length training with no model selection on the eval set.
+
+        For protocols whose val_dataloader is the held-out test split (e.g. trainval -> test):
+        no per-epoch evaluation, no best_stg1 reload / EMA rollback after stop_epoch, and the
+        final EMA weights are evaluated exactly once after the last epoch.
+        """
+        self.train()
+        args = self.cfg
+        stop_epoch = self.train_dataloader.collate_fn.stop_epoch
+
+        n_parameters, model_stats = stats(self.cfg)
+        print(model_stats)
+        print("-" * 36 + "Start training (fixed schedule)" + "-" * 36)
+        start_time = time.time()
+        for epoch in range(self.last_epoch + 1, args.epochs):
+            self.train_dataloader.set_epoch(epoch)
+            if dist_utils.is_dist_available_and_initialized():
+                self.train_dataloader.sampler.set_epoch(epoch)
+
+            if self.ema and epoch >= stop_epoch:
+                if epoch == stop_epoch:
+                    print(f"Refresh EMA at epoch {epoch} with decay {self.train_dataloader.collate_fn.ema_restart_decay}")
+                self.ema.decay = self.train_dataloader.collate_fn.ema_restart_decay
+
+            train_stats = train_one_epoch(
+                self.model,
+                self.criterion,
+                self.train_dataloader,
+                self.optimizer,
+                self.device,
+                epoch,
+                epochs=args.epochs,
+                max_norm=args.clip_max_norm,
+                print_freq=args.print_freq,
+                ema=self.ema,
+                scaler=self.scaler,
+                lr_warmup_scheduler=self.lr_warmup_scheduler,
+                writer=self.writer,
+                use_wandb=self.use_wandb,
+                output_dir=self.output_dir,
+            )
+
+            if self.lr_warmup_scheduler is None or self.lr_warmup_scheduler.finished():
+                self.lr_scheduler.step()
+
+            self.last_epoch += 1
+
+            if self.output_dir:
+                checkpoint_paths = [self.output_dir / "last.pth"]
+                if (epoch + 1) % args.checkpoint_freq == 0:
+                    checkpoint_paths.append(self.output_dir / f"checkpoint{epoch:04}.pth")
+                for checkpoint_path in checkpoint_paths:
+                    dist_utils.save_on_master(self.state_dict(), checkpoint_path)
+
+            log_stats = {
+                **{f"train_{k}": v for k, v in train_stats.items()},
+                "epoch": epoch,
+                "n_parameters": n_parameters,
+            }
+            if self.output_dir and dist_utils.is_main_process():
+                with (self.output_dir / "log.txt").open("a") as f:
+                    f.write(json.dumps(log_stats) + "\n")
+
+        if self.output_dir:
+            dist_utils.save_on_master(self.state_dict(), self.output_dir / "final.pth")
+
+        module = self.ema.module if self.ema else self.model
+        test_stats, coco_evaluator = evaluate(
+            module,
+            self.criterion,
+            self.postprocessor,
+            self.val_dataloader,
+            self.evaluator,
+            self.device,
+            self.last_epoch,
+            self.use_wandb,
+            output_dir=self.output_dir,
+        )
+        if self.output_dir and dist_utils.is_main_process():
+            with (self.output_dir / "log.txt").open("a") as f:
+                f.write(json.dumps({**{f"final_{k}": v for k, v in test_stats.items()}, "epoch": self.last_epoch}) + "\n")
+            if coco_evaluator is not None and "bbox" in coco_evaluator.coco_eval:
+                (self.output_dir / "eval").mkdir(exist_ok=True)
+                torch.save(coco_evaluator.coco_eval["bbox"].eval, self.output_dir / "eval" / "final.pth")
 
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))

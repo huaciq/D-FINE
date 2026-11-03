@@ -86,6 +86,48 @@ class PadToSize(T.Pad):
 
 
 @register()
+class PadToCanvas(T.Transform):
+    """Pad right/bottom to a fixed canvas, so a following Resize applies one scale
+    factor to every image (keeps pixel size proportional to physical size when the
+    dataset has a constant GSD). orig_size is set to the canvas so the postprocessor
+    maps boxes back correctly; with right/bottom padding canvas coords == original coords.
+    """
+
+    _transformed_types = (
+        PIL.Image.Image,
+        Image,
+        Video,
+        Mask,
+        BoundingBoxes,
+    )
+
+    def __init__(self, size, fill=0) -> None:
+        super().__init__()
+        self.size = [size, size] if isinstance(size, int) else list(size)  # h, w
+        self.fill = fill
+
+    def _get_params(self, flat_inputs: List[Any]) -> Dict[str, Any]:
+        h, w = F.get_size(flat_inputs[0])
+        assert h <= self.size[0] and w <= self.size[1], f"image {h}x{w} larger than canvas {self.size}"
+        return dict(padding=[0, 0, self.size[1] - w, self.size[0] - h])
+
+    def make_params(self, flat_inputs: List[Any]) -> Dict[str, Any]:
+        return self._get_params(flat_inputs)
+
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        return self._transform(inpt, params)
+
+    def _transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        return F.pad(inpt, padding=params["padding"], fill=self.fill)
+
+    def forward(self, *inputs: Any) -> Any:
+        outputs = super().forward(*inputs)
+        if len(outputs) > 1 and isinstance(outputs[1], dict):
+            outputs[1]["orig_size"] = torch.as_tensor([self.size[1], self.size[0]])
+        return outputs
+
+
+@register()
 class RandomIoUCrop(T.RandomIoUCrop):
     def __init__(
         self,

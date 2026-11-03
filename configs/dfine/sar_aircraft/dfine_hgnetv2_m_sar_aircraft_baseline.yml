@@ -1,0 +1,33 @@
+# FROZEN baseline protocol for SAR-AIRcraft-1.0 (fixed 2026-11-03). Module experiments
+# inherit this file and change only the model; see docs/sar_aircraft_dfine.md.
+#
+# Data:  train on trainval (3489 imgs = official train 3047 + val 442), report on test (879).
+# No model selection on test: fixed schedule, no per-epoch eval, no best_stg1 reload / EMA
+# rollback (solver `fixed_schedule`); the final EMA weights are evaluated on test once.
+# Init:  dfine_m_obj2coco_airplane7.pth (score heads from COCO "airplane", see
+#        tools/dataset/init_head_from_coco_class.py), passed with -t.
+# Recipe (inherited from dfine_hgnetv2_m_sar_aircraft.yml): scale-preserving PadToCanvas 1500
+# -> 1024, hflip + batch multi-scale only, linear warmup 500 it, AdamW lr 1.75e-4 @ batch 16,
+# EMA 0.9999, AMP, seed 0.
+__include__: ['./dfine_hgnetv2_m_sar_aircraft.yml']
+
+output_dir: ./output/dfine_hgnetv2_m_sar_aircraft_baseline
+fixed_schedule: True
+
+# 218 it/epoch at batch 16 -> 26.2k iterations. Chosen a priori (no test feedback):
+# DEIM-1024 (train only, b12) was still rising on val at ep 102 (~26k it, ~15 ep lost to its
+# quadratic warmup); trainval adds 14.5% iterations per epoch.
+epochs: 120
+
+train_dataloader:
+  dataset:
+    ann_file: /root/zxy/datasets/SAR-AIRcraft-1.0/COCO/trainval.json
+    transforms:
+      policy:
+        epoch: 112
+  collate_fn:
+    stop_epoch: 112  # last 8 epochs: no multi-scale, EMA restart
+
+val_dataloader:
+  dataset:
+    ann_file: /root/zxy/datasets/SAR-AIRcraft-1.0/COCO/test.json

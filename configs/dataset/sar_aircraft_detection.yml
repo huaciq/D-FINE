@@ -1,0 +1,45 @@
+# SAR-AIRcraft-1.0 (Gaofen-3, ~1 m GSD), official split, unchanged:
+#   train 3047 imgs -> training, val 442 -> model selection, test 879 -> final report only.
+# COCO json prepared from the original VOC xml (category ids 0..6, sorted by name).
+# file_name is "JPEGImages/xxxx.jpg", so img_folder is the dataset ROOT.
+task: detection
+
+evaluator:
+  type: CocoEvaluator
+  iou_types: ['bbox', ]
+
+num_classes: 7  # A220, A320/321, A330, ARJ21, Boeing737, Boeing787, other
+remap_mscoco_category: False
+
+train_dataloader:
+  type: DataLoader
+  dataset:
+    type: CocoDetection
+    img_folder: /root/zxy/datasets/SAR-AIRcraft-1.0
+    ann_file: /root/zxy/datasets/SAR-AIRcraft-1.0/COCO/train.json
+    return_masks: False
+    transforms:
+      type: Compose
+      ops: ~
+  shuffle: True
+  num_workers: 4
+  drop_last: True
+  collate_fn:
+    type: BatchImageCollateFunction
+
+
+val_dataloader:
+  type: DataLoader
+  dataset:
+    type: CocoDetection
+    img_folder: /root/zxy/datasets/SAR-AIRcraft-1.0
+    ann_file: /root/zxy/datasets/SAR-AIRcraft-1.0/COCO/val.json
+    return_masks: False
+    transforms:
+      type: Compose
+      ops: ~
+  shuffle: False
+  num_workers: 4
+  drop_last: False
+  collate_fn:
+    type: BatchImageCollateFunction

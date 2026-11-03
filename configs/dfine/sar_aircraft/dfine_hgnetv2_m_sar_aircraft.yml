@@ -1,0 +1,108 @@
+# D-FINE-M on SAR-AIRcraft-1.0, initialised from Objects365->COCO weights via `-t`.
+#
+# Protocol aligned with PGD (Huang et al., TCSVT 2025, arXiv 2411.12301):
+#   official split (train 3047 / val 442 / test 879), 1024 input, train on train only.
+#   PGD's numbers are most likely val AP@0.5 (see docs): report val AP50 to compare with
+#   PGD, and test AP50 separately as the held-out number. Never mix the two.
+#
+# SAR-specific changes vs. the generic D-FINE recipe (see docs/sar_aircraft_dfine.md):
+#   1. Scale-preserving input: pad every image to a 1500 canvas, then resize to 1024, so all
+#      images share one scale factor (0.683). GSD is constant (~1 m), and object pixel size is
+#      the main cue between fine-grained classes; plain resize maps 800..1500 px images with
+#      factors 0.43..0.8 and scrambles it.
+#   2. RandomZoomOut / RandomIoUCrop off: both rescale objects (destroying the size cue),
+#      ZoomOut pastes into zero-filled canvas unlike SAR clutter.
+#   3. RandomPhotometricDistort off: images are single-channel, so hue/saturation are no-ops;
+#      contrast 0.5..1.5 rewrites backscatter/speckle statistics.
+#   4. Kept: horizontal flip (PGD uses fliplr 0.5; aircraft are mirror-symmetric) and batch
+#      multi-scale (+5.8 AP when removed vs kept in the earlier DEIM-M SAR-AIRcraft runs).
+__include__: [
+  '../../dataset/sar_aircraft_detection.yml',
+  '../../runtime.yml',
+  '../include/dataloader.yml',
+  '../include/optimizer.yml',
+  '../include/dfine_hgnetv2.yml',
+]
+
+output_dir: ./output/dfine_hgnetv2_m_sar_aircraft
+checkpoint_freq: 1000  # keep only last.pth / best_stg*.pth (disk is tight)
+
+eval_spatial_size: [1024, 1024] # h w
+
+
+DFINE:
+  backbone: HGNetv2
+
+HGNetv2:
+  name: 'B2'
+  return_idx: [1, 2, 3]
+  freeze_at: -1
+  freeze_norm: False
+  use_lab: True
+  pretrained: False  # whole detector comes from dfine_m_obj2coco.pth via -t
+
+DFINETransformer:
+  num_layers: 4  # 5 6
+  eval_idx: -1  # -2 -3
+
+HybridEncoder:
+  in_channels: [384, 768, 1536]
+  hidden_dim: 256
+  depth_mult: 0.67
+
+# obj2custom-M recipe (lr 2.5e-4 @ batch 32), sqrt-scaled to global batch 16
+# (same rule as the DEIM SAR runs: 3.5e-4 @ 28 -> 2.3e-4 @ 12).
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*backbone)(?!.*norm|bn).*$'
+      lr: 0.0000175
+    -
+      params: '^(?=.*backbone)(?=.*norm|bn).*$'
+      lr: 0.0000175
+      weight_decay: 0.
+    -
+      params: '^(?=.*(?:encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
+      weight_decay: 0.
+
+  lr: 0.000175
+  betas: [0.9, 0.999]
+  weight_decay: 0.000125
+
+# 190 it/epoch at batch 16; 96 epochs with multi-scale, then 8 plain epochs + EMA restart.
+# Warmup stays D-FINE's LINEAR 500 it (~2.6 ep). The DEIM SAR runs used a QUADRATIC 2000-it
+# warmup (~18.5 ep at b28): val AP <9 until ep 15 for both EMA and raw weights, i.e. LR-bound.
+# 104 ep: DEIM-640 plateaued at ~ep 65 (incl. ~15 ep lost to warmup); DEIM-1024 was still
+# rising at ep 102. Trim to (plateau + 8) after the first full run.
+epochs: 104
+
+train_dataloader:
+  total_batch_size: 16  # global (e.g. 2 GPUs x 8)
+  dataset:
+    transforms:
+      ops:
+        - {type: RandomHorizontalFlip}
+        - {type: PadToCanvas, size: 1500, fill: 0}
+        - {type: Resize, size: [1024, 1024], }
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+      policy:
+        name: stop_epoch
+        epoch: 96
+        ops: []
+  collate_fn:
+    base_size: 1024
+    base_size_repeat: 6
+    stop_epoch: 96
+    ema_restart_decay: 0.9999
+
+val_dataloader:
+  total_batch_size: 32
+  dataset:
+    transforms:
+      ops:
+        - {type: PadToCanvas, size: 1500, fill: 0}
+        - {type: Resize, size: [1024, 1024], }
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
